@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Gee's World</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1020;font-family:system-ui,Arial,sans-serif}
+  body{display:flex;align-items:center;justify-content:center}
+  #wrap{position:relative;width:100vw;height:100vh;max-width:1100px;max-height:700px;background:#58c7ff;overflow:hidden}
+  canvas{width:100%;height:100%;display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+  #hud{position:absolute;top:10px;left:12px;right:12px;display:flex;justify-content:space-between;color:white;font-weight:900;font-size:14px;text-shadow:2px 2px #17305b;pointer-events:none}
+  #title{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;background:linear-gradient(#42bdf2,#d7f7ff);color:#172b52;text-align:center}
+  #title h1{font-size:clamp(40px,10vw,82px);margin:0 0 8px;letter-spacing:2px;text-shadow:4px 4px #fff}
+  #title p{margin:4px 18px 18px;font-weight:800}
+  button{border:0;border-radius:14px;padding:14px 24px;font-weight:900;font-size:18px;background:#ffd84d;color:#352000;box-shadow:0 5px 0 #c79317}
+  #touch{position:absolute;left:0;right:0;bottom:14px;display:flex;justify-content:space-between;padding:0 14px;pointer-events:none}
+  .cluster{display:flex;gap:10px;pointer-events:auto}
+  .ctrl{width:64px;height:58px;border-radius:16px;background:#ffffff66;border:2px solid #ffffff99;color:#fff;font-size:25px;font-weight:900;box-shadow:0 3px 0 #245079aa;backdrop-filter:blur(3px);touch-action:none}
+  @media (min-width:800px){#touch{opacity:.45}.ctrl{width:58px;height:52px}}
+  #msg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#fff;padding:18px 24px;border-radius:18px;text-align:center;color:#172b52;font-weight:900;display:none;box-shadow:0 8px 0 #24466b}
+  #msg small{display:block;margin-top:8px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="game" width="960" height="540"></canvas>
+<div id="hud"><span id="level">LEVEL 1/5</span><span id="score">COINS 0</span><span id="lives">♥♥♥</span></div>
+<div id="title">
+  <h1>GEE'S WORLD</h1>
+  <p>5 retro platforming levels • collect the star-coins • reach the flag</p>
+  <button id="start">START GAME</button>
+</div>
+<div id="msg"></div>
+<div id="touch">
+  <div class="cluster"><button class="ctrl" id="left">◀</button><button class="ctrl" id="right">▶</button></div>
+  <div class="cluster"><button class="ctrl" id="jump">▲</button></div>
+</div>
+</div>
+<script>
+const c=document.getElementById('game'),ctx=c.getContext('2d');
+ctx.imageSmoothingEnabled=false;
+const W=960,H=540;
+let levelNo=0,score=0,lives=3,playing=false,won=false;
+let keys={left:false,right:false,jump:false},jumpLatch=false;
+let player,cam=0,coins=[],enemies=[],plats=[],goal,particles=[],levelWidth=3600;
+const levels=[
+ {sky:'#62cdf7', ground:'#39a852', theme:'Meadow', goalX:3420},
+ {sky:'#8c78e8', ground:'#7c4b9b', theme:'Night', goalX:3460},
+ {sky:'#f8a95b', ground:'#b85b35', theme:'Sunset', goalX:3550},
+ {sky:'#5bb6b9', ground:'#277a76', theme:'Jungle', goalX:3650},
+ {sky:'#26304f', ground:'#37415e', theme:'Final', goalX:3780}
+];
+
+function resetLevel(){
+  const L=levels[levelNo]; levelWidth=L.goalX+300; cam=0;
+  player={x:80,y:390,w:34,h:48,vx:0,vy:0,on:false,face:1,inv:0};
+  coins=[];enemies=[];plats=[];particles=[];
+  // floor
+  for(let x=0;x<levelWidth;x+=240) plats.push({x,y:488,w:240,h:52});
+  const sets=[
+    [[300,410,150],[560,350,130],[800,430,150],[1060,370,180],[1360,300,140],[1650,410,180],[1940,340,150],[2240,420,180],[2520,350,150],[2820,290,170],[3150,400,180],[3400,330,150]],
+    [[250,390,130],[510,310,120],[760,410,160],[1050,300,150],[1360,390,140],[1640,270,160],[1960,370,160],[2280,290,130],[2570,400,170],[2890,310,160],[3200,250,150],[3460,360,150]],
+    [[280,410,170],[600,340,130],[900,410,140],[1160,300,170],[1450,380,130],[1740,300,180],[2070,400,150],[2340,320,160],[2630,250,140],[2910,370,180],[3220,290,140],[3520,390,150]],
+    [[260,390,150],[520,290,130],[800,370,140],[1090,250,140],[1370,350,170],[1690,220,140],[1970,360,150],[2250,270,170],[2560,390,150],[2840,260,150],[3130,350,160],[3420,240,160],[3650,350,150]],
+    [[220,400,140],[470,300,120],[720,390,130],[980,260,150],[1260,350,130],[1530,230,160],[1830,380,140],[2110,290,160],[2420,190,140],[2700,360,160],[3000,260,150],[3290,170,150],[3570,330,170],[3780,240,150]]
+  ];
+  for(const p of sets[levelNo]) plats.push({x:p[0],y:p[1],w:p[2],h:20});
+  // coins
+  for(let i=0;i<plats.length;i++){
+    const p=plats[i]; if(i===0)continue;
+    const n=1+(i%3);
+    for(let j=0;j<n;j++) coins.push({x:p.x+22+j*30,y:p.y-42,w:28,h:28,taken:false});
+  }
+  // extra coin trails
+  for(let x=150;x<levelWidth-200;x+=180) coins.push({x,y:levelNo===4?300+(x%140):365-(x%80),w:28,h:28,taken:false});
+  const ex=Array.from({length:11},(_,i)=>260+i*310);
+  ex.forEach((x,i)=>enemies.push({x,y:430,w:34,h:34,vx:(i%2?1:-1)*1.1,min:x-90,max:x+90,dead:false}));
+  goal={x:L.goalX,y:388,w:28,h:100};
+}
+function startGame(){document.getElementById('title').style.display='none';levelNo=0;score=0;lives=3;playing=true;won=false;resetLevel();updateHud();sound(660,.06)}
+function updateHud(){document.getElementById('level').textContent=`LEVEL ${levelNo+1}/5`;document.getElementById('score').textContent=`COINS ${score}`;document.getElementById('lives').textContent='♥'.repeat(lives)+'♡'.repeat(3-lives)}
+function rectHit(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
+function hurt(){
+ if(player.inv>0)return;
+ lives--; updateHud(); sound(120,.15);
+ if(lives<=0){playing=false;showMsg('GAME OVER','Tap here to restart');return}
+ player.x=80;player.y=350;player.vx=0;player.vy=0;player.inv=120;
+}
+function nextLevel(){
+ if(levelNo===4){won=true;playing=false;showMsg('YOU BEAT GEE’S WORLD!','5 levels complete • tap to play again');sound(880,.12);setTimeout(()=>sound(1100,.12),130);return}
+ levelNo++;resetLevel();updateHud();sound(720,.08);
+}
+function showMsg(a,b){const m=document.getElementById('msg');m.innerHTML=`<div style="font-size:28px">${a}</div><small>${b}</small>`;m.style.display='block';m.onclick=()=>{m.style.display='none';if(won||lives<=0){startGame()}else{playing=true}}}
+function sound(freq,dur){try{const ac=new AudioContext(),o=ac.createOscillator(),g=ac.createGain();o.frequency.value=freq;o.type='square';g.gain.value=.035;o.connect(g);g.connect(ac.destination);o.start();g.gain.exponentialRampToValueAtTime(.0001,ac.currentTime+dur);o.stop(ac.currentTime+dur)}catch(e){}}
+function spawn(x,y,n=8){for(let i=0;i<n;i++)particles.push({x,y,vx:(Math.random()-.5)*4,vy:(Math.random()-.7)*4,life:35})}
+
+function update(){
+ if(!playing)return;
+ const accel=.65, max=6.2;
+ if(keys.left){player.vx-=accel;player.face=-1}
+ if(keys.right){player.vx+=accel;player.face=1}
+ if(!keys.left&&!keys.right)player.vx*=.82;
+ player.vx=Math.max(-max,Math.min(max,player.vx));
+ if(keys.jump&&!jumpLatch&&player.on){player.vy=-13;player.on=false;sound(440,.05)}
+ jumpLatch=keys.jump;
+ player.vy+=.62; if(player.vy>15)player.vy=15;
+ let oldY=player.y; player.x+=player.vx; player.y+=player.vy; player.on=false;
+ if(player.x<0)player.x=0;
+ // platforms
+ for(const p of plats){
+   if(player.x+player.w>p.x&&player.x<p.x+p.w&&oldY+player.h<=p.y+5&&player.y+player.h>=p.y&&player.vy>=0){
+     player.y=p.y-player.h;player.vy=0;player.on=true;
+   }
+ }
+ if(player.y>H+100){hurt();return}
+ if(player.inv>0)player.inv--;
+ for(const co of coins)if(!co.taken&&rectHit(player,co)){co.taken=true;score++;updateHud();spawn(co.x+14,co.y+14,5);sound(780,.045)}
+ for(const e of enemies){
+   if(e.dead)continue;e.x+=e.vx;if(e.x<e.min||e.x>e.max)e.vx*=-1;
+   if(rectHit(player,e)){
+     if(player.vy>2&&player.y+player.h-e.y<18){e.dead=true;player.vy=-8;score+=2;updateHud();spawn(e.x+17,e.y+15,8);sound(240,.07)}
+     else hurt();
+   }
+ }
+ if(rectHit(player,goal)){nextLevel();return}
+ cam += ((player.x-W*.38)-cam)*.12; cam=Math.max(0,Math.min(levelWidth-W,cam));
+ for(const p of particles){p.x+=p.vx;p.y+=p.vy;p.vy+=.15;p.life--}particles=particles.filter(p=>p.life>0);
+}
+function pixelFaceCoin(x,y,t){
+ // Gold retro token with a stylized curly-haired face inspired by the reference photo.
+ ctx.save();ctx.translate(x+14,y+14);
+ ctx.fillStyle='#f7c53e';ctx.fillRect(-14,-14,28,28);
+ ctx.fillStyle='#ffe46b';ctx.fillRect(-10,-12,20,24);
+ ctx.fillStyle='#20243a';
+ // curly hair silhouette
+ const blobs=[[-9,-8],[-4,-11],[2,-10],[8,-7],[-10,-2],[10,-2],[-8,4],[9,4]];
+ for(const b of blobs)ctx.fillRect(b[0],b[1],5,5);
+ ctx.fillRect(-6,-6,12,5);
+ // eyes
+ ctx.fillRect(-6,-1,3,3);ctx.fillRect(3,-1,3,3);
+ // nose/smile
+ ctx.fillRect(-1,2,3,2);ctx.fillRect(-5,6,10,2);
+ // hoops
+ ctx.strokeStyle='#fff1a8';ctx.lineWidth=2;ctx.strokeRect(-11,-1,3,5);ctx.strokeRect(8,-1,3,5);
+ ctx.restore();
+}
+function draw(){
+ const L=levels[levelNo]||levels[0];
+ ctx.fillStyle=L.sky;ctx.fillRect(0,0,W,H);
+ // clouds / stars
+ if(levelNo<4){
+  ctx.fillStyle='#ffffff55';for(let x=-((cam*.2)%240);x<W;x+=240){ctx.fillRect(x,75,70,18);ctx.fillRect(x+25,58,55,35)}
+ }else{
+  ctx.fillStyle='#ffffffcc';for(let x=40;x<W;x+=85)ctx.fillRect(x,55+(x%3)*30,3,3)
+ }
+ ctx.save();ctx.translate(-cam,0);
+ // background hills
+ ctx.fillStyle=levelNo===4?'#151a30':'#6ca96a66';
+ for(let x=-200;x<levelWidth;x+=330){ctx.beginPath();ctx.arc(x+170,470,180,Math.PI,0);ctx.fill()}
+ // platforms
+ for(const p of plats){ctx.fillStyle=L.ground;ctx.fillRect(p.x,p.y,p.w,p.h);ctx.fillStyle='#8fe05d';ctx.fillRect(p.x,p.y,p.w,7);for(let x=p.x+12;x<p.x+p.w;x+=28){ctx.fillStyle='#2b7b46';ctx.fillRect(x,p.y+11,10,5)}}
+ // goal
+ ctx.fillStyle='#f5f5e8';ctx.fillRect(goal.x,goal.y,7,100);ctx.fillStyle='#ffdb45';ctx.beginPath();ctx.moveTo(goal.x+7,goal.y+5);ctx.lineTo(goal.x+62,goal.y+22);ctx.lineTo(goal.x+7,goal.y+40);ctx.fill();
+ // coins
+ for(const co of coins)if(!co.taken){ctx.save();ctx.translate(co.x+14,co.y+14);ctx.rotate(Math.sin(Date.now()/150+co.x)*.12);ctx.translate(-14,-14);pixelFaceCoin(0,0,0);ctx.restore()}
+ // enemies
+ for(const e of enemies)if(!e.dead){ctx.fillStyle='#6e294c';ctx.fillRect(e.x,e.y+8,e.w,26);ctx.fillStyle='#b84d63';ctx.fillRect(e.x+5,e.y,e.w-10,18);ctx.fillStyle='#fff';ctx.fillRect(e.x+8,e.y+9,6,6);ctx.fillRect(e.x+20,e.y+9,6,6);ctx.fillStyle='#222';ctx.fillRect(e.x+10,e.y+11,3,3);ctx.fillRect(e.x+22,e.y+11,3,3)}
+ // player
+ if(player.inv%8<5){
+  ctx.save();ctx.translate(player.x+17,player.y+24);if(player.face<0)ctx.scale(-1,1);
+  // body
+  ctx.fillStyle='#2b78d0';ctx.fillRect(-13,4,26,24);ctx.fillStyle='#f0b07d';ctx.fillRect(-12,-13,24,20);
+  // curly hair
+  ctx.fillStyle='#252338';const hair=[[-13,-11],[-8,-17],[-2,-19],[5,-17],[11,-12],[-15,-4],[14,-4]];hair.forEach(b=>ctx.fillRect(b[0],b[1],7,7));ctx.fillRect(-8,-12,18,7);
+  // face
+  ctx.fillStyle='#1e2032';ctx.fillRect(-7,-4,3,3);ctx.fillRect(4,-4,3,3);ctx.fillRect(-5,3,10,2);
+  ctx.fillStyle='#ffd34e';ctx.fillRect(-13,26,10,6);ctx.fillRect(3,26,10,6);
+  ctx.restore();
+ }
+ for(const p of particles){ctx.fillStyle='#ffe36a';ctx.fillRect(p.x,p.y,4,4)}
+ ctx.restore();
+}
+function loop(){update();draw();requestAnimationFrame(loop)}loop();
+
+document.getElementById('start').onclick=startGame;
+['left','right','jump'].forEach(id=>{
+ const el=document.getElementById(id);
+ const on=e=>{e.preventDefault();keys[id]=true};
+ const off=e=>{e.preventDefault();keys[id]=false};
+ el.addEventListener('pointerdown',on);el.addEventListener('pointerup',off);el.addEventListener('pointercancel',off);el.addEventListener('pointerleave',off);
+});
+addEventListener('keydown',e=>{if(e.key==='ArrowLeft'||e.key==='a')keys.left=true;if(e.key==='ArrowRight'||e.key==='d')keys.right=true;if(e.key==='ArrowUp'||e.key===' '||e.key==='w')keys.jump=true});
+addEventListener('keyup',e=>{if(e.key==='ArrowLeft'||e.key==='a')keys.left=false;if(e.key==='ArrowRight'||e.key==='d')keys.right=false;if(e.key==='ArrowUp'||e.key===' '||e.key==='w')keys.jump=false});
+</script>
+</body>
+</html>
